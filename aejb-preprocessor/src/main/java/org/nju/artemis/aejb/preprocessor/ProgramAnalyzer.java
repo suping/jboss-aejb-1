@@ -2,6 +2,7 @@ package org.nju.artemis.aejb.preprocessor;
 
 import static org.objectweb.asm.Opcodes.*;
 
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -79,7 +80,7 @@ public class ProgramAnalyzer {
 							ExtractControlFlow(cn.name, mn);
 						} catch (AnalyzerException ignored) {
 						}
-						recognize_state(0, 0, mn.instructions);
+						recognize_state2(0, 0, mn.instructions);
 						mergeState();
 						ExtractMetaData();
 						setNext();
@@ -470,6 +471,87 @@ public class ProgramAnalyzer {
 			stateMachine.addEvent(new Event(last_state, src, "end"));
 		}
 	}
+	//正确抽取方法
+	public void recognize_state2(int src, int last_state, InsnList insns) {
+		if (src < stateMachine.getEnd()) {
+			if (stateMachine.getStates().contains(src)) {
+				stateMachine.addEvent(new Event(last_state, src, ""));
+			} else {
+				AbstractInsnNode an = insns.get(src);
+				if (an instanceof MethodInsnNode) {
+					String owner = ((MethodInsnNode) an).owner;
+					/*
+					 * if(!future.contains(owner)){ future.add(owner); }
+					 */
+					String e = "Ejb." + owner + "."
+							+ ((MethodInsnNode) an).name;
+					if (ejbs.contains(owner)) {
+						stateMachine.addState(src);
+						stateMachine.addEvent(new Event(last_state, src, e));
+						last_state = src;
+						recognize_state2((Integer) controlflow.getFlow(src).dst.get(0), last_state, insns);
+					}
+				} else {
+					if (an instanceof JumpInsnNode) {
+
+						int dst = -1;
+						if (an.getOpcode() == GOTO) {
+							dst = (Integer) controlflow.getFlow(src).dst.get(0);
+							recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), last_state, insns);
+						} else {
+							stateMachine.addState(src);
+							stateMachine
+									.addEvent(new Event(last_state, src, ""));
+							if (controlflow.getFlow(src).isWhile) {
+								for (int k = 0; k < controlflow.getDstSize(src); k++) {
+									dst = (Integer) controlflow.getDst(src)
+											.get(k);
+									if (src < dst) {
+										stateMachine.addState(dst);
+										stateMachine.addEvent(new Event(src,
+												dst, "while(" + src + ")F"));
+										jumpinf.put(insns.get(dst), "while("
+												+ src + ")F");
+										recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), dst, insns);
+									} else {
+										stateMachine.addState(dst);
+										stateMachine.addEvent(new Event(src,
+												dst, "while(" + src + ")T"));
+										jumpinf.put(insns.get(dst), "while("
+												+ src + ")T");
+										recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), dst, insns);
+									}
+								}
+							} else {
+								for (int k = 0; k < controlflow.getDstSize(src); k++) {
+									dst = (Integer) controlflow.getDst(src)
+											.get(k);
+									stateMachine.addState(dst);
+									stateMachine.addEvent(new Event(src, dst,
+											"if(" + src + ")" + k));
+									jumpinf.put(insns.get(dst), "if(" + src
+											+ ")" + k);
+									recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), dst, insns);
+								}
+							}
+						}
+					} else {
+						
+						if((an.getOpcode()>=IRETURN && an.getOpcode()<=RETURN)||an.getOpcode()==ATHROW){
+							stateMachine.addState(src);
+							stateMachine.addEvent(new Event(last_state, src, "end"));
+						}
+						else{
+						recognize_state2((Integer) controlflow.getFlow(src).dst.get(0), last_state, insns);
+						}
+						}
+				}
+			}
+		} else {
+			stateMachine.addState(stateMachine.getEnd());
+			stateMachine.addEvent(new Event(last_state, src, "end"));
+		}
+	}
 
 	// 合并状态
 	public void mergeState() {
@@ -665,9 +747,11 @@ public class ProgramAnalyzer {
 			tempFile.mkdir();
 			File destJar = new File("E:\\bb.jar");
 
-			jarHelper.unjarDir(srcJar, tempFile);
-			ProgramAnalyzer.begin_analyze(tempFile);
+			jarHelper.unjarDir(srcJar, tempFile);			
+			ProgramAnalyzer.begin_analyze(tempFile);			
 			jarHelper.jarDir(tempFile, destJar);
+			
+			
 
 		} catch (Exception e) {
 			e.printStackTrace();
