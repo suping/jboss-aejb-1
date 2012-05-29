@@ -25,10 +25,14 @@ public class TransactionSecurityInterceptor implements Interceptor {
 	@Override
 	public Object processInvocation(InterceptorContext context) throws Exception {
 		log.debug("TransactionSecurityInterceptor: start process invocation");
-		String param0 = (String) context.getParameters()[0];
+		Object[] params = context.getParameters();
+		if(params == null || !(params[0] instanceof String)) {
+			return context.proceed();
+		}
+		String param0 = (String) params[0];
 		String[] splits = param0.split("/");
 		if(splits.length != 2) {
-			context.proceed();
+			return context.proceed();
 		}
 		final String transactionName = splits[0];
 		final String objectId = splits[1];
