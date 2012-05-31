@@ -16,6 +16,7 @@ import javax.naming.NamingException;
 
 import org.nju.artemis.aejb.management.client.AEjbClient;
 import org.nju.artemis.aejb.management.client.AEjbClientImpl.AEjbStatus;
+import org.nju.artemis.aejb.preprocessor.ProgramAnalyzer;
 
 /**
  * A command line utility to manage aejbs.
@@ -456,7 +457,8 @@ public class CommandLineMain {
 			if(file) {
 				deployment.delete();
 			} else {
-				FileOperations.copyFile(deployment, jbossHome + "/standalone/deployments/" + deployment.getName());
+				ProgramAnalyzer.main(new String[]{buffer, jbossHome + "/standalone/deployments/tmp/", jbossHome + "/standalone/deployments/" + deployment.getName()});
+//				FileOperations.copyFile(deployment, jbossHome + "/standalone/deployments/" + deployment.getName());
 			}
 			
 			return new SuccessState(ManagementMessages.OperationSuccess, new FunctionPrompt());
