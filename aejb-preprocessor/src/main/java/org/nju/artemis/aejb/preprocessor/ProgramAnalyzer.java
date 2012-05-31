@@ -1,20 +1,29 @@
 package org.nju.artemis.aejb.preprocessor;
 
-import static org.objectweb.asm.Opcodes.*;
-
+import static org.objectweb.asm.Opcodes.ACC_INTERFACE;
+import static org.objectweb.asm.Opcodes.ACONST_NULL;
+import static org.objectweb.asm.Opcodes.ALOAD;
+import static org.objectweb.asm.Opcodes.ASTORE;
+import static org.objectweb.asm.Opcodes.ATHROW;
+import static org.objectweb.asm.Opcodes.CHECKCAST;
+import static org.objectweb.asm.Opcodes.DUP;
+import static org.objectweb.asm.Opcodes.GOTO;
+import static org.objectweb.asm.Opcodes.INVOKEINTERFACE;
+import static org.objectweb.asm.Opcodes.INVOKESPECIAL;
+import static org.objectweb.asm.Opcodes.INVOKEVIRTUAL;
+import static org.objectweb.asm.Opcodes.IRETURN;
+import static org.objectweb.asm.Opcodes.ISTORE;
+import static org.objectweb.asm.Opcodes.NEW;
+import static org.objectweb.asm.Opcodes.RETURN;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.io.PrintWriter;
-import java.util.Enumeration;
 import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.StringTokenizer;
-import java.util.jar.*;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -30,6 +39,7 @@ import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
+import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TryCatchBlockNode;
@@ -58,6 +68,7 @@ public class ProgramAnalyzer {
 	List[] future;
 	// 对于已分析出的跳转及在改点要加入的跳转信息
 	Hashtable<AbstractInsnNode, String> jumpinf = new Hashtable<AbstractInsnNode, String>();
+	Hashtable<AbstractInsnNode, String> ejbinf = new Hashtable<AbstractInsnNode, String>();
 	// 分析出对应每个状态的所以可能的下步动作及所到达的下个状态
 	List<String> next = new LinkedList();
 	// 分析出的所以状态信息
@@ -83,10 +94,10 @@ public class ProgramAnalyzer {
 						recognize_state2(0, 0, mn.instructions);
 						mergeState();
 						ExtractMetaData();
+						//minimizeState();
 						setNext();
 						// 字节码文件中插入抽取地状态及状态变化触发信息
-						Iterator<AnnotationNode> iter = mn.visibleAnnotations
-								.iterator();
+						Iterator<AnnotationNode> iter = mn.visibleAnnotations.iterator();
 						while (iter.hasNext()) {
 							AnnotationNode an = iter.next();
 							if (an.desc.equals("Ljavax/aejb/Transaction;")) {
@@ -157,13 +168,9 @@ public class ProgramAnalyzer {
 						while (i.hasNext()) {
 							AbstractInsnNode i1 = i.next();
 							if (i1 instanceof MethodInsnNode) {
-								String owner = ((MethodInsnNode) i1).owner;
-								// System.out.println(((MethodInsnNode)
-								// i1).owner+","+((MethodInsnNode)i1).name+","+((MethodInsnNode)
-								// i1).desc);
-								if (ejbs.contains(owner)) {
-									String e = "Ejb." + owner + "."
-											+ ((MethodInsnNode) i1).name;
+								
+								if (ejbinf.containsKey(i1)) {
+									System.out.println(ejbinf.get(i1));
 									InsnList il = new InsnList();
 									il.add(new TypeInsnNode(NEW,
 											"java/lang/StringBuilder"));
@@ -194,7 +201,7 @@ public class ProgramAnalyzer {
 									trig.add(new MethodInsnNode(INVOKEVIRTUAL,
 											"java/lang/Object", "toString",
 											"()Ljava/lang/String;"));
-									trig.add(new LdcInsnNode(e));
+									trig.add(new LdcInsnNode(ejbinf.get(i1)));
 									trig.add(new MethodInsnNode(INVOKEVIRTUAL,
 											"javax/aejb/TransactionTrigger",
 											"trigger",
@@ -229,10 +236,16 @@ public class ProgramAnalyzer {
 											"javax/aejb/TransactionTrigger",
 											"trigger",
 											"(Ljava/lang/String;Ljava/lang/String;)V"));
-									insns.insert(i1.getNext(), trig);
+									if(i1 instanceof LabelNode){
+										if(i1.getNext() instanceof LineNumberNode)
+											insns.insert(i1.getNext(), trig);
+										else
+											insns.insert(i1, trig);
+									}										
+									else
+										insns.insert(i1.getPrevious(), trig);
 								} else {
-									if (i1.getOpcode() >= IRETURN
-											&& i1.getOpcode() <= RETURN) {
+									if ((i1.getOpcode() >= IRETURN && i1.getOpcode() <= RETURN)|| i1.getOpcode()==ATHROW) {
 										InsnList trig = new InsnList();
 										trig.add(new VarInsnNode(ALOAD,
 												localnum));
@@ -303,8 +316,8 @@ public class ProgramAnalyzer {
 				}
 			}
 		}
-
 	}
+	
 
 	// 查询每个状态的next state及相应的触发事件
 	public void setNext() {
@@ -483,11 +496,12 @@ public class ProgramAnalyzer {
 					/*
 					 * if(!future.contains(owner)){ future.add(owner); }
 					 */
-					String e = "Ejb." + owner + "."
-							+ ((MethodInsnNode) an).name;
+					
 					if (ejbs.contains(owner)) {
+						String e = "Ejb." + owner + "."	+src;
 						stateMachine.addState(src);
 						stateMachine.addEvent(new Event(last_state, src, e));
+						ejbinf.put(insns.get(src), e);
 						last_state = src;
 						recognize_state2((Integer) controlflow.getFlow(src).dst.get(0), last_state, insns);
 					}
@@ -509,16 +523,14 @@ public class ProgramAnalyzer {
 									if (src < dst) {
 										stateMachine.addState(dst);
 										stateMachine.addEvent(new Event(src,
-												dst, "while(" + src + ")F"));
-										jumpinf.put(insns.get(dst), "while("
-												+ src + ")F");
+												dst, "while.F."+src));
+										jumpinf.put(insns.get(dst), "while.F."+src);
 										recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), dst, insns);
 									} else {
 										stateMachine.addState(dst);
 										stateMachine.addEvent(new Event(src,
-												dst, "while(" + src + ")T"));
-										jumpinf.put(insns.get(dst), "while("
-												+ src + ")T");
+												dst, "while.T."+src));
+										jumpinf.put(insns.get(dst),"while.T."+src);
 										recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), dst, insns);
 									}
 								}
@@ -528,9 +540,8 @@ public class ProgramAnalyzer {
 											.get(k);
 									stateMachine.addState(dst);
 									stateMachine.addEvent(new Event(src, dst,
-											"if(" + src + ")" + k));
-									jumpinf.put(insns.get(dst), "if(" + src
-											+ ")" + k);
+											"if." + k+"."+ src));
+									jumpinf.put(insns.get(dst), "if." + k+"."+ src);
 									recognize_state2((Integer) controlflow.getFlow(dst).dst.get(0), dst, insns);
 								}
 							}
@@ -675,6 +686,48 @@ public class ProgramAnalyzer {
 		}
 
 	}
+	//whether two states are equal:the elements are equal ignore the order
+	public boolean equalState(int i,int j){
+		int ifl=future[i].size();
+		int jfl=future[j].size();
+		int ipl=past[i].size();
+		int jpl=past[j].size();
+		if(ifl==jfl && ipl==jpl)
+		{
+			for(int k=0;k<ifl;k++){
+				if(!(future[j].contains(future[i].get(k))))
+				{
+					return false;
+				}
+			}
+			for(int k=0;k<ipl;k++){
+				if(!(past[j].contains(past[i].get(k))))
+				{
+					return false;
+				}
+			}
+			return true;
+			
+		}
+		return false;
+	}
+	public void minimizeState(){
+		List<Event> e = stateMachine.getEvents();
+		List state = stateMachine.getStates();
+		for(int i=0;i<e.size();i++){
+			Event event = (Event) e.get(i);
+			int head = event.getHead();
+			int tail = event.getTail();			
+			int headindex = state.indexOf(head);
+			int tailindex = state.indexOf(tail);
+			if(equalState(headindex,tailindex)){
+				System.out.println(headindex+"=="+tailindex+"true");
+			}
+			
+		}
+		
+	}
+	
 
 	// 显示字节码文件
 	public static void showClassSource(String file) {
@@ -741,15 +794,42 @@ public class ProgramAnalyzer {
 	public static void main(String args[]) {
 		try {
 			JarTool jarHelper = new JarTool();			
-			File srcJar = new File("E:\\a.jar");
+			File srcJar = new File(args[0]);
 			// unjar the file in a temp file which we are to analyze
-			File tempFile = new File("e:\\temp");
+			File tempFile = new File(args[1]);
 			tempFile.mkdir();
-			File destJar = new File("E:\\bb.jar");
+			File destJar = new File(args[2]);
 
 			jarHelper.unjarDir(srcJar, tempFile);			
 			ProgramAnalyzer.begin_analyze(tempFile);			
 			jarHelper.jarDir(tempFile, destJar);
+			
+			/*String filename1="C:\\Users\\SuPing\\workspace\\asmtest\\bin\\Ttest.class";
+			FileInputStream in = new FileInputStream(filename1);
+			//showClassSource("C:\\Users\\SuPing\\workspace\\asmtest\\bin\\test.class");
+			ProgramAnalyzer t = new ProgramAnalyzer();
+			ClassReader cr = new ClassReader(in);
+			ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+			ClassVisitor cv = t.getClassAdapter(cw);
+			cr.accept(cv, 0);
+			byte[] b = cw.toByteArray();
+			String infilename = "C:\\Users\\SuPing\\workspace\\asmtest\\bin\\Ttest.class";
+			StringTokenizer filename = new StringTokenizer(infilename, "\\");
+			String ss[] = new String[filename.countTokens()];
+			int i = 0;
+			while (filename.hasMoreTokens()) {
+				ss[i++] = filename.nextToken();
+			}
+			String file = ss[i - 1];
+			System.out.println(file);
+			File dir = new File("e:\\analize_result");
+			dir.mkdir();
+			File out = new File("e:\\analize_result\\" + file);
+
+			FileOutputStream fout = new FileOutputStream(out);
+			fout.write(b);
+			fout.close();*/
+			//showClassSource("e:\\analize_result\\" + file);
 			
 			
 
